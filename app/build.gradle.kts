@@ -60,3 +60,22 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
 }
+
+// Automatically copy APK outputs to Google Drive (G:\My Drive\APKs\aMyAPP\apk) after build
+val gDriveApkDir = file("G:/My Drive/APKs/aMyAPP/apk")
+tasks.matching { it.name in listOf("assembleDebug", "assembleRelease", "assemble") }.configureEach {
+    doLast {
+        if (gDriveApkDir.exists()) {
+            val apkOutputDir = layout.buildDirectory.dir("outputs/apk").get().asFile
+            if (apkOutputDir.exists()) {
+                println(">>> Auto-copying APKs to Google Drive: ${gDriveApkDir.absolutePath}")
+                copy {
+                    from(apkOutputDir)
+                    into(gDriveApkDir)
+                }
+                println(">>> Copy to Google Drive completed successfully!")
+            }
+        }
+    }
+}
+
