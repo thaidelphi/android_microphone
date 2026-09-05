@@ -339,6 +339,10 @@ class AudioDeviceManager(private val context: Context) {
             }
 
             // 3. Check GET_DEVICES_OUTPUTS for connected Bluetooth devices (A2DP / SCO)
+            // If BT device is visible in outputs but NOT in inputs, show BT mic option.
+            // IMPORTANT: do NOT pass the A2DP output device as deviceInfo for an input item!
+            // An A2DP output device cannot be used as AudioRecord.preferredDevice (it's output-only).
+            // Set deviceInfo=null so the SCO callback will locate the real SCO input device.
             val outputDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             val btOutput = outputDevices.find {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
@@ -353,7 +357,7 @@ class AudioDeviceManager(private val context: Context) {
                     name = "🎙️ ไมค์บลูทูธ (Bluetooth Mic: $btName)".trim(),
                     type = AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
                     isSource = true,
-                    deviceInfo = btOutput,
+                    deviceInfo = null,  // null! Let SCO callback find real input device
                     isBluetooth = true
                 ))
             }
