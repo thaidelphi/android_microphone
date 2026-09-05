@@ -23,6 +23,8 @@ android {
             storePassword = "androidmic123"
             keyAlias = "androidmic"
             keyPassword = "androidmic123"
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
