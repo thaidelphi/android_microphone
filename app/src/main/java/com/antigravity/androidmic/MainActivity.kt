@@ -1,16 +1,22 @@
 package com.antigravity.androidmic
 
 import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.provider.Settings
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -20,6 +26,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.antigravity.androidmic.audio.AudioDeviceItem
+import com.antigravity.androidmic.audio.AudioDeviceManager
 import com.antigravity.androidmic.databinding.ActivityMainBinding
 import kotlin.math.log10
 
@@ -34,6 +41,24 @@ class MainActivity : AppCompatActivity() {
 
     private val outputDevices = mutableListOf<AudioDeviceItem>()
     private lateinit var outputSpinnerAdapter: ArrayAdapter<String>
+
+    private var isBtReceiverRegistered = false
+
+    private val bluetoothReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            when (action) {
+                BluetoothDevice.ACTION_ACL_CONNECTED,
+                BluetoothDevice.ACTION_ACL_DISCONNECTED,
+                BluetoothAdapter.ACTION_STATE_CHANGED,
+                AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED -> {
+                    runOnUiThread {
+                        refreshDeviceList()
+                    }
+                }
+            }
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -90,7 +115,18 @@ class MainActivity : AppCompatActivity() {
             svc.engine.deviceManager.onScoAudioConnected = {
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "🎙️ ไมค์บลูทูธเชื่อมต่อสัญญาณเสียงสำเร็จ (Bluetooth Mic Ready)", Toast.LENGTH_SHORT).show()
+                    refreshDeviceList()
                 }
+            }
+
+            // Sync current spinner selections to engine
+            val inPos = binding.spinnerInputSource.selectedItemPosition
+            if (inPos in inputDevices.indices) {
+                svc.engine.preferredInputItem = inputDevices[inPos]
+            }
+            val outPos = binding.spinnerOutputRoute.selectedItemPosition
+            if (outPos in outputDevices.indices) {
+                svc.engine.preferredOutputItem = outputDevices[outPos]
             }
 
             refreshDeviceList()
@@ -106,9 +142,7 @@ class MainActivity : AppCompatActivity() {
     private val initialPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        if (isBound) {
-            refreshDeviceList()
-        }
+        refreshDeviceList()
     }
 
     private val requestPermissionLauncher = registerForActivityResult(
@@ -158,15 +192,24 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (isBound) {
-            refreshDeviceList()
-        }
+        refreshDeviceList()
     }
 
     override fun onStart() {
         super.onStart()
         val intent = Intent(this, MicAmplifierService::class.java)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+
+        if (!isBtReceiverRegistered) {
+            val filter = IntentFilter().apply {
+                addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+                addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+                addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+                addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+            }
+            registerReceiver(bluetoothReceiver, filter)
+            isBtReceiverRegistered = true
+        }
     }
 
     override fun onStop() {
@@ -175,9 +218,31 @@ class MainActivity : AppCompatActivity() {
             unbindService(serviceConnection)
             isBound = false
         }
+        if (isBtReceiverRegistered) {
+            try {
+                unregisterReceiver(bluetoothReceiver)
+                isBtReceiverRegistered = false
+            } catch (e: Exception) {}
+        }
     }
 
     private fun setupControls() {
+        // Bluetooth Settings Quick Launch Button
+        binding.btnOpenBtSettings.setOnClickListener {
+            try {
+                val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                startActivity(intent)
+            } catch (e: Throwable) {
+                Toast.makeText(this, "ไม่สามารถเปิดหน้าตั้งค่าบลูทูธได้", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Bluetooth / Device Refresh Button
+        binding.btnRefreshDevices.setOnClickListener {
+            refreshDeviceList()
+            Toast.makeText(this, "🔄 อัปเดตรายชื่ออุปกรณ์และสถานะบลูทูธแล้ว", Toast.LENGTH_SHORT).show()
+        }
+
         // Power button toggle
         binding.btnPowerToggle.setOnClickListener {
             val isActive = amplifierService?.engine?.isActive == true
@@ -272,7 +337,6 @@ class MainActivity : AppCompatActivity() {
         binding.sliderEchoVolume.value = volume
         binding.sliderEchoDelay.value = delayMs
         binding.sliderEchoRepeats.value = repeats
-
         binding.tvEchoVolumeLabel.text = "ระดับเสียงสะท้อน (Echo Volume): ${volume.toInt()}%"
         binding.tvEchoDelayLabel.text = "จังหวะการสะท้อน (Delay Time): ${delayMs.toInt()} ms"
         binding.tvEchoRepeatsLabel.text = "จำนวนครั้งที่สะท้อน (Repeats / Decay): ${repeats.toInt()}%"
@@ -298,19 +362,14 @@ class MainActivity : AppCompatActivity() {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (position in inputDevices.indices) {
                     val selected = inputDevices[position]
-                    amplifierService?.engine?.preferredInputDevice = selected.deviceInfo
+                    amplifierService?.engine?.preferredInputItem = selected
 
-                    val isBt = selected.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                               selected.type == 26 ||
-                               selected.id == 9999 ||
-                               selected.name.contains("บลูทูธ") ||
-                               selected.name.contains("Bluetooth")
-                    if (isBt) {
-                        Toast.makeText(this@MainActivity, "🎙️ กำลังเชื่อมสัญญาณเสียงไมค์บลูทูธ: ${selected.name}", Toast.LENGTH_SHORT).show()
+                    if (selected.isBluetooth || selected.id == 9999 || selected.name.contains("บลูทูธ") || selected.name.contains("Bluetooth")) {
+                        Toast.makeText(this@MainActivity, "🎙️ เลือกใช้: ${selected.name}", Toast.LENGTH_SHORT).show()
                     }
 
                     // Feedback warning if user selects phone's built-in mic while output is phone speaker
-                    val currentOut = amplifierService?.engine?.preferredOutputDevice
+                    val currentOut = amplifierService?.engine?.preferredOutputItem
                     val isSpeaker = currentOut == null || currentOut.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
                     if (selected.type == AudioDeviceInfo.TYPE_BUILTIN_MIC && isSpeaker) {
                         showFeedbackWarningIfNeeded()
@@ -335,17 +394,58 @@ class MainActivity : AppCompatActivity() {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 if (position in outputDevices.indices) {
                     val selected = outputDevices[position]
-                    amplifierService?.engine?.preferredOutputDevice = selected.deviceInfo
-                    if (selected.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                        selected.id == 8888 ||
-                        selected.name.contains("บลูทูธ") ||
-                        selected.name.contains("Bluetooth")) {
-                        Toast.makeText(this@MainActivity, "📻 เลือกส่งเสียงออก: ${selected.name}", Toast.LENGTH_SHORT).show()
+                    amplifierService?.engine?.preferredOutputItem = selected
+
+                    if (selected.isBluetooth || selected.id == 8888 || selected.name.contains("บลูทูธ") || selected.name.contains("Bluetooth")) {
+                        Toast.makeText(this@MainActivity, "📻 ส่งเสียงออก: ${selected.name}", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+
+        // Immediate initial load so spinners are never empty
+        loadInitialDevices()
+    }
+
+    private fun loadInitialDevices() {
+        val tempManager = AudioDeviceManager(this)
+        val inDevs = tempManager.getAvailableInputDevices()
+        inputDevices.clear()
+        inputDevices.addAll(inDevs)
+        inputSpinnerAdapter.clear()
+        inputSpinnerAdapter.addAll(inDevs.map { it.name })
+        inputSpinnerAdapter.notifyDataSetChanged()
+
+        val outDevs = tempManager.getAvailableOutputDevices()
+        outputDevices.clear()
+        outputDevices.addAll(outDevs)
+        outputSpinnerAdapter.clear()
+        outputSpinnerAdapter.addAll(outDevs.map { it.name })
+        outputSpinnerAdapter.notifyDataSetChanged()
+
+        // Default: Index 0 is Bluetooth mic, and speaker is phone speaker
+        binding.spinnerInputSource.setSelection(0)
+        val speakerIdx = outDevs.indexOfFirst { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+        if (speakerIdx >= 0) {
+            binding.spinnerOutputRoute.setSelection(speakerIdx)
+        }
+
+        updateBluetoothStatusUI(tempManager)
+    }
+
+    private fun updateBluetoothStatusUI(manager: AudioDeviceManager) {
+        val summary = manager.getBluetoothStatusSummary()
+        binding.tvBtStatusDesc.text = summary
+        if (summary.contains("🟢")) {
+            binding.tvBtStatusDesc.setTextColor(ContextCompat.getColor(this, R.color.emerald_active))
+            binding.tvBtBadge.text = "🟢 เชื่อมต่อแล้ว"
+            binding.tvBtBadge.setTextColor(ContextCompat.getColor(this, R.color.emerald_active))
+        } else {
+            binding.tvBtStatusDesc.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            binding.tvBtBadge.text = "🔵 บลูทูธ"
+            binding.tvBtBadge.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
         }
     }
 
@@ -362,72 +462,73 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshDeviceList() {
-        val manager = amplifierService?.engine?.deviceManager ?: return
+        val manager = amplifierService?.engine?.deviceManager ?: AudioDeviceManager(this)
 
         // 1. Refresh Input Devices
         val inDevs = manager.getAvailableInputDevices()
+        val currentSelectedIn = if (binding.spinnerInputSource.selectedItemPosition in inputDevices.indices) {
+            inputDevices[binding.spinnerInputSource.selectedItemPosition]
+        } else {
+            amplifierService?.engine?.preferredInputItem
+        }
+
         inputDevices.clear()
         inputDevices.addAll(inDevs)
         inputSpinnerAdapter.clear()
         inputSpinnerAdapter.addAll(inDevs.map { it.name })
         inputSpinnerAdapter.notifyDataSetChanged()
 
-        val currentIn = amplifierService?.engine?.preferredInputDevice
-        if (currentIn != null) {
-            val matchIdx = inDevs.indexOfFirst { it.deviceInfo?.id == currentIn.id || it.deviceInfo?.type == currentIn.type }
+        if (currentSelectedIn != null) {
+            val matchIdx = inDevs.indexOfFirst {
+                (it.deviceInfo != null && it.deviceInfo.id == currentSelectedIn.deviceInfo?.id) ||
+                (it.id == currentSelectedIn.id) ||
+                (it.isBluetooth && currentSelectedIn.isBluetooth)
+            }
             if (matchIdx >= 0) {
                 binding.spinnerInputSource.setSelection(matchIdx)
+            } else if (inDevs.isNotEmpty()) {
+                binding.spinnerInputSource.setSelection(0)
             }
-        } else {
-            // Auto-select Bluetooth mic or headset if connected
-            val headsetIndex = inDevs.indexOfFirst {
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                it.type == 26 /* BLE_HEADSET */ ||
-                it.id == 9999 ||
-                it.name.contains("บลูทูธ") ||
-                it.name.contains("Bluetooth") ||
-                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET
-            }
-            val targetInputIdx = if (headsetIndex >= 0) headsetIndex else 0
-            if (targetInputIdx in inDevs.indices) {
-                binding.spinnerInputSource.setSelection(targetInputIdx)
-                amplifierService?.engine?.preferredInputDevice = inDevs[targetInputIdx].deviceInfo
-            }
+        } else if (inDevs.isNotEmpty()) {
+            binding.spinnerInputSource.setSelection(0)
         }
 
         // 2. Refresh Output Devices (Loudspeaker, Bluetooth, Headphones)
         val outDevs = manager.getAvailableOutputDevices()
+        val currentSelectedOut = if (binding.spinnerOutputRoute.selectedItemPosition in outputDevices.indices) {
+            outputDevices[binding.spinnerOutputRoute.selectedItemPosition]
+        } else {
+            amplifierService?.engine?.preferredOutputItem
+        }
+
         outputDevices.clear()
         outputDevices.addAll(outDevs)
         outputSpinnerAdapter.clear()
         outputSpinnerAdapter.addAll(outDevs.map { it.name })
         outputSpinnerAdapter.notifyDataSetChanged()
 
-        val currentOut = amplifierService?.engine?.preferredOutputDevice
-        if (currentOut != null) {
-            val matchIdx = outDevs.indexOfFirst { it.deviceInfo?.id == currentOut.id || it.deviceInfo?.type == currentOut.type }
+        if (currentSelectedOut != null) {
+            val matchIdx = outDevs.indexOfFirst {
+                (it.deviceInfo != null && it.deviceInfo.id == currentSelectedOut.deviceInfo?.id) ||
+                (it.id == currentSelectedOut.id) ||
+                (it.isBluetooth && currentSelectedOut.isBluetooth)
+            }
             if (matchIdx >= 0) {
                 binding.spinnerOutputRoute.setSelection(matchIdx)
-            }
-        } else {
-            // Default to Bluetooth speaker if available, otherwise phone speaker
-            val btIdx = outDevs.indexOfFirst {
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                it.type == 26 || it.type == 27
-            }
-            if (btIdx >= 0) {
-                binding.spinnerOutputRoute.setSelection(btIdx)
-                amplifierService?.engine?.preferredOutputDevice = outDevs[btIdx].deviceInfo
             } else {
                 val speakerIdx = outDevs.indexOfFirst { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
                 if (speakerIdx >= 0) {
                     binding.spinnerOutputRoute.setSelection(speakerIdx)
-                    amplifierService?.engine?.preferredOutputDevice = outDevs[speakerIdx].deviceInfo
                 }
             }
+        } else {
+            val speakerIdx = outDevs.indexOfFirst { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+            if (speakerIdx >= 0) {
+                binding.spinnerOutputRoute.setSelection(speakerIdx)
+            }
         }
+
+        updateBluetoothStatusUI(manager)
     }
 
     private fun checkPermissionsAndStart() {

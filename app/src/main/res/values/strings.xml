@@ -8,10 +8,12 @@
     <string name="btn_start">เปิดไมค์ขยายเสียง</string>
     <string name="btn_stop">ปิดการขยายเสียง</string>
     
-    <!-- Routing Info -->
-    <string name="title_routing">การเชื่อมต่อเสียง (Audio Routing)</string>
-    <string name="input_source">เสียงเข้า (Input):</string>
-    <string name="output_route">เสียงออก (Output):</string>
+    <!-- Routing & Bluetooth Info -->
+    <string name="title_routing">เมนูบลูทูธและอุปกรณ์เสียง (Bluetooth &amp; Audio)</string>
+    <string name="input_source">🎤 เลือกไมโครโฟน / เมนูไมค์บลูทูธ (Microphone Source):</string>
+    <string name="output_route">🔊 เลือกลำโพงส่งเสียงออก / บลูทูธ (Speaker Output):</string>
+    <string name="btn_bt_settings">⚙️ ตั้งค่าบลูทูธในเครื่อง</string>
+    <string name="btn_refresh_devices">🔄 สแกนค้นหาอุปกรณ์</string>
     <string name="output_speaker_forced">ลำโพงตัวเครื่อง (Built-in Speaker)</string>
     <string name="force_speaker_title">บังคับออกลำโพงมือถือ</string>
     <string name="force_speaker_desc">แม้เสียบหูฟัง เสียงพูดจะถูกขับออกทางลำโพงตัวเครื่อง</string>

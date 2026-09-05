@@ -1,5 +1,8 @@
 package com.antigravity.androidmic.audio
 
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -15,15 +18,23 @@ data class AudioDeviceItem(
     val name: String,
     val type: Int,
     val isSource: Boolean,
-    val deviceInfo: AudioDeviceInfo? = null
+    val deviceInfo: AudioDeviceInfo? = null,
+    val isBluetooth: Boolean = false
 )
 
 class AudioDeviceManager(private val context: Context) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    var selectedInputItem: AudioDeviceItem? = null
+        private set
+    var selectedOutputItem: AudioDeviceItem? = null
+        private set
+
     var selectedInputDevice: AudioDeviceInfo? = null
         private set
     var selectedOutputDevice: AudioDeviceInfo? = null
         private set
+
     var isSpeakerForced: Boolean = true
         private set
 
@@ -62,11 +73,13 @@ class AudioDeviceManager(private val context: Context) {
 
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            Log.d(TAG, "Audio devices added")
             onDevicesChanged?.invoke()
             applyCurrentRouting()
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+            Log.d(TAG, "Audio devices removed")
             onDevicesChanged?.invoke()
             applyCurrentRouting()
         }
@@ -108,18 +121,39 @@ class AudioDeviceManager(private val context: Context) {
     }
 
     /**
-     * Apply routing according to selected input device (Microphone)
+     * Apply routing according to selected input item
      */
+    fun routeToInput(item: AudioDeviceItem?) {
+        selectedInputItem = item
+        selectedInputDevice = item?.deviceInfo
+        applyCurrentRouting()
+    }
+
     fun routeToInput(device: AudioDeviceInfo?) {
         selectedInputDevice = device
+        selectedInputItem = device?.let {
+            val isBt = it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+            AudioDeviceItem(it.id, it.productName?.toString() ?: "Mic", it.type, true, it, isBt)
+        }
         applyCurrentRouting()
     }
 
     /**
-     * Apply routing according to selected output device (Speaker / Bluetooth)
+     * Apply routing according to selected output item
      */
+    fun routeToOutput(item: AudioDeviceItem?) {
+        selectedOutputItem = item
+        selectedOutputDevice = item?.deviceInfo
+        isSpeakerForced = (item == null || item.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+        applyCurrentRouting()
+    }
+
     fun routeToOutput(device: AudioDeviceInfo?) {
         selectedOutputDevice = device
+        selectedOutputItem = device?.let {
+            val isBt = it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 || it.type == 27
+            AudioDeviceItem(it.id, it.productName?.toString() ?: "Speaker", it.type, false, it, isBt)
+        }
         isSpeakerForced = (device == null || device.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
         applyCurrentRouting()
     }
@@ -131,21 +165,31 @@ class AudioDeviceManager(private val context: Context) {
         if (forceSpeaker) {
             routeToOutput(getBuiltinSpeakerDevice())
         } else {
-            routeToOutput(null)
+            routeToOutput(null as AudioDeviceInfo?)
         }
     }
 
-    private fun applyCurrentRouting() {
+    fun applyCurrentRouting() {
         try {
+            val inItem = selectedInputItem
+            val outItem = selectedOutputItem
             val inTarget = selectedInputDevice
             val outTarget = selectedOutputDevice
 
-            val isBluetoothMic = inTarget != null && (
-                inTarget.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                inTarget.type == 26 /* TYPE_BLE_HEADSET */ ||
-                inTarget.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                inTarget.id == 9999 || inTarget.id == 8888
-            )
+            val isBluetoothMic = inItem?.isBluetooth == true ||
+                                 inItem?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                                 inItem?.type == 26 /* BLE_HEADSET */ ||
+                                 inItem?.id == 9999 ||
+                                 inItem?.name?.contains("บลูทูธ") == true ||
+                                 inItem?.name?.contains("Bluetooth") == true ||
+                                 (inTarget != null && (
+                                     inTarget.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                                     inTarget.type == 26 ||
+                                     inTarget.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                                     inTarget.id == 9999
+                                 ))
+
+            Log.i(TAG, "applyCurrentRouting: isBluetoothMic=$isBluetoothMic (inItem=${inItem?.name}, outItem=${outItem?.name})")
 
             if (isBluetoothMic) {
                 // Must be MODE_IN_COMMUNICATION for Bluetooth SCO / HFP on Android!
@@ -158,13 +202,13 @@ class AudioDeviceManager(private val context: Context) {
                     val btComm = commDevices.find {
                         it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
                         it.type == 26 /* TYPE_BLE_HEADSET */
-                    } ?: if (inTarget?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || inTarget?.type == 26) inTarget else null
+                    } ?: (if (inTarget?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || inTarget?.type == 26) inTarget else null)
 
                     if (btComm != null) {
                         val ok = audioManager.setCommunicationDevice(btComm)
                         Log.i(TAG, "setCommunicationDevice(${btComm.productName}) = $ok")
                     } else {
-                        Log.w(TAG, "No Bluetooth communication device in availableCommunicationDevices")
+                        Log.w(TAG, "No Bluetooth communication device in availableCommunicationDevices yet")
                     }
                 }
 
@@ -175,13 +219,15 @@ class AudioDeviceManager(private val context: Context) {
                     try {
                         audioManager.startBluetoothSco()
                         audioManager.isBluetoothScoOn = true
+                        Log.i(TAG, "startBluetoothSco requested")
                     } catch (e: Throwable) {
                         Log.e(TAG, "startBluetoothSco error", e)
                     }
                 }
 
                 // If output is built-in speaker, force speakerphone on
-                if (outTarget == null || outTarget.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                val isOutSpeaker = outItem == null || outItem.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || outTarget?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                if (isOutSpeaker) {
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = true
                 } else {
@@ -189,7 +235,7 @@ class AudioDeviceManager(private val context: Context) {
                     audioManager.isSpeakerphoneOn = false
                 }
 
-                // Maximize call stream and music volume
+                // Set stream volumes to appropriate levels
                 try {
                     val maxCall = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                     audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxCall, 0)
@@ -211,7 +257,8 @@ class AudioDeviceManager(private val context: Context) {
                     isScoStarted = false
                 }
 
-                if (outTarget != null && outTarget.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                val isOutSpeaker = outItem == null || outItem.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || outTarget?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                if (isOutSpeaker) {
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = true
                 } else {
@@ -258,21 +305,18 @@ class AudioDeviceManager(private val context: Context) {
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
 
             for (dev in devices) {
-                val productName = try {
-                    dev.productName?.toString()
-                } catch (e: Throwable) {
-                    null
-                }
+                val productName = try { dev.productName?.toString() } catch (e: Throwable) { null }
+                val isBt = dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || dev.type == 26 /* TYPE_BLE_HEADSET */
 
                 val name = when (dev.type) {
                     AudioDeviceInfo.TYPE_WIRED_HEADSET -> "หูฟังมีสาย (Wired Headset Mic)"
                     AudioDeviceInfo.TYPE_USB_HEADSET -> "หูฟัง/ไมค์ USB-C (USB Headset Mic)"
-                    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "ไมค์บลูทูธ (Bluetooth Mic: ${productName ?: ""})".trim()
-                    26 /* TYPE_BLE_HEADSET */ -> "ไมค์บลูทูธ BLE (Bluetooth BLE Mic: ${productName ?: ""})".trim()
-                    AudioDeviceInfo.TYPE_BUILTIN_MIC -> "ไมค์ตัวเครื่องมือถือ (Phone Mic)"
+                    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "🎙️ ไมค์บลูทูธ (Bluetooth Mic: ${productName ?: ""})".trim()
+                    26 /* TYPE_BLE_HEADSET */ -> "🎙️ ไมค์บลูทูธ BLE (Bluetooth BLE Mic: ${productName ?: ""})".trim()
+                    AudioDeviceInfo.TYPE_BUILTIN_MIC -> "📱 ไมค์ตัวเครื่องมือถือ (Phone Mic)"
                     else -> if (!productName.isNullOrBlank()) "ไมโครโฟนภายนอก ($productName)" else "ไมโครโฟนภายนอก (External Mic)"
                 }
-                list.add(AudioDeviceItem(dev.id, name, dev.type, isSource = true, deviceInfo = dev))
+                list.add(AudioDeviceItem(dev.id, name, dev.type, isSource = true, deviceInfo = dev, isBluetooth = isBt))
             }
 
             // 2. On Android 12+ (API 31+), check availableCommunicationDevices
@@ -286,8 +330,9 @@ class AudioDeviceManager(private val context: Context) {
                         val isAlreadyIn = list.any { it.deviceInfo?.id == dev.id || it.type == dev.type }
                         if (!isAlreadyIn) {
                             val productName = try { dev.productName?.toString() } catch (e: Throwable) { null }
-                            val name = "ไมค์บลูทูธ (Bluetooth Mic: ${productName ?: ""})".trim()
-                            list.add(0, AudioDeviceItem(dev.id, name, dev.type, isSource = true, deviceInfo = dev))
+                            val isBt = dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || dev.type == 26
+                            val name = "🎙️ ไมค์บลูทูธ (Bluetooth Mic: ${productName ?: ""})".trim()
+                            list.add(0, AudioDeviceItem(dev.id, name, dev.type, isSource = true, deviceInfo = dev, isBluetooth = isBt))
                         }
                     }
                 }
@@ -300,7 +345,7 @@ class AudioDeviceManager(private val context: Context) {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
                 it.type == 26 || it.type == 27
             }
-            val hasBtInList = list.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 }
+            val hasBtInList = list.any { it.isBluetooth }
             if (btOutput != null && !hasBtInList) {
                 val btName = try { btOutput.productName?.toString() } catch (e: Throwable) { null } ?: ""
                 list.add(0, AudioDeviceItem(
@@ -308,18 +353,34 @@ class AudioDeviceManager(private val context: Context) {
                     name = "🎙️ ไมค์บลูทูธ (Bluetooth Mic: $btName)".trim(),
                     type = AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
                     isSource = true,
-                    deviceInfo = btOutput
+                    deviceInfo = btOutput,
+                    isBluetooth = true
                 ))
             }
 
-            // ALWAYS guarantee Bluetooth Mic option is in the list!
-            if (list.none { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 || it.id == 9999 }) {
+            // 4. Query paired/bonded Bluetooth devices for friendly device names
+            val bondedAudio = getBondedAudioDevices()
+            if (list.none { it.isBluetooth } && bondedAudio.isNotEmpty()) {
+                val firstBonded = bondedAudio.first()
+                list.add(0, AudioDeviceItem(
+                    id = 9999,
+                    name = "🎙️ ไมค์บลูทูธ (Bluetooth Mic: $firstBonded)",
+                    type = AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                    isSource = true,
+                    deviceInfo = null,
+                    isBluetooth = true
+                ))
+            }
+
+            // 5. ALWAYS guarantee Bluetooth Mic option is in the list!
+            if (list.none { it.isBluetooth }) {
                 list.add(0, AudioDeviceItem(
                     id = 9999,
                     name = "🎙️ ไมค์บลูทูธ (Bluetooth Mic)",
                     type = AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
                     isSource = true,
-                    deviceInfo = null
+                    deviceInfo = null,
+                    isBluetooth = true
                 ))
             }
         } catch (e: Throwable) {
@@ -327,11 +388,11 @@ class AudioDeviceManager(private val context: Context) {
         }
 
         // Always ensure Bluetooth Mic and Phone Mic are in list
-        if (list.none { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 || it.id == 9999 }) {
-            list.add(0, AudioDeviceItem(9999, "🎙️ ไมค์บลูทูธ (Bluetooth Mic)", AudioDeviceInfo.TYPE_BLUETOOTH_SCO, true))
+        if (list.none { it.isBluetooth }) {
+            list.add(0, AudioDeviceItem(9999, "🎙️ ไมค์บลูทูธ (Bluetooth Mic)", AudioDeviceInfo.TYPE_BLUETOOTH_SCO, true, null, true))
         }
         if (list.none { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }) {
-            list.add(AudioDeviceItem(0, "📱 ไมค์ตัวเครื่องมือถือ (Phone Mic)", AudioDeviceInfo.TYPE_BUILTIN_MIC, true))
+            list.add(AudioDeviceItem(0, "📱 ไมค์ตัวเครื่องมือถือ (Phone Mic)", AudioDeviceInfo.TYPE_BUILTIN_MIC, true, null, false))
         }
 
         return list
@@ -346,11 +407,10 @@ class AudioDeviceManager(private val context: Context) {
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
 
             for (dev in devices) {
-                val productName = try {
-                    dev.productName?.toString()
-                } catch (e: Throwable) {
-                    null
-                }
+                val productName = try { dev.productName?.toString() } catch (e: Throwable) { null }
+                val isBt = dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                           dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                           dev.type == 26 || dev.type == 27
 
                 val name = when (dev.type) {
                     AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "🔊 ลำโพงตัวเครื่องมือถือ (Phone Speaker)"
@@ -358,7 +418,7 @@ class AudioDeviceManager(private val context: Context) {
                     AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "🎧 บลูทูธแฮนด์ฟรี (${productName ?: "Bluetooth Device"})"
                     AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "🎧 หูฟังมีสาย (Wired Headphones)"
                     AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE -> "🔌 อุปกรณ์เสียง USB (${productName ?: "USB Audio"})"
-                    else -> if (dev.type == 26 /* TYPE_BLE_HEADSET */ || dev.type == 27 /* TYPE_BLE_SPEAKER */) {
+                    else -> if (dev.type == 26 || dev.type == 27) {
                         "📻 ลำโพงบลูทูธ BLE (${productName ?: "BLE Speaker"})"
                     } else if (dev.type != AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
                         "อุปกรณ์เสียงภายนอก (${productName ?: "External"})"
@@ -366,8 +426,22 @@ class AudioDeviceManager(private val context: Context) {
                 }
 
                 if (name != null) {
-                    list.add(AudioDeviceItem(dev.id, name, dev.type, isSource = false, deviceInfo = dev))
+                    list.add(AudioDeviceItem(dev.id, name, dev.type, isSource = false, deviceInfo = dev, isBluetooth = isBt))
                 }
+            }
+
+            // Check paired/bonded audio devices if no Bluetooth speaker found
+            val bondedAudio = getBondedAudioDevices()
+            if (list.none { it.isBluetooth } && bondedAudio.isNotEmpty()) {
+                val firstBonded = bondedAudio.first()
+                list.add(AudioDeviceItem(
+                    id = 8888,
+                    name = "📻 ลำโพงบลูทูธ ($firstBonded)",
+                    type = AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                    isSource = false,
+                    deviceInfo = null,
+                    isBluetooth = true
+                ))
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Error querying audio output devices", e)
@@ -375,15 +449,79 @@ class AudioDeviceManager(private val context: Context) {
 
         // Always ensure Phone Speaker is in the list
         if (list.none { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }) {
-            list.add(0, AudioDeviceItem(0, "🔊 ลำโพงตัวเครื่องมือถือ (Phone Speaker)", AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, false, getBuiltinSpeakerDevice()))
+            list.add(0, AudioDeviceItem(0, "🔊 ลำโพงตัวเครื่องมือถือ (Phone Speaker)", AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, false, getBuiltinSpeakerDevice(), false))
         }
 
         // Always ensure Bluetooth Speaker is in the list!
-        if (list.none { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 || it.type == 27 || it.id == 8888 }) {
-            list.add(AudioDeviceItem(8888, "📻 ลำโพงบลูทูธ (Bluetooth Speaker)", AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, false))
+        if (list.none { it.isBluetooth }) {
+            list.add(AudioDeviceItem(8888, "📻 ลำโพงบลูทูธ (Bluetooth Speaker)", AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, false, null, true))
         }
 
         return list
+    }
+
+    /**
+     * Get bonded/paired audio devices
+     */
+    fun getBondedAudioDevices(): List<String> {
+        val names = mutableListOf<String>()
+        try {
+            val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            val adapter = bluetoothManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
+            if (adapter != null && adapter.isEnabled) {
+                @Suppress("MissingPermission")
+                val bonded = adapter.bondedDevices
+                if (bonded != null) {
+                    for (dev in bonded) {
+                        val devName = try { dev.name } catch (e: Throwable) { null }
+                        if (!devName.isNullOrBlank()) {
+                            names.add(devName)
+                        }
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            Log.d(TAG, "getBondedAudioDevices notice: ${e.message}")
+        }
+        return names
+    }
+
+    /**
+     * Get summary of current Bluetooth connection status for UI badge
+     */
+    fun getBluetoothStatusSummary(): String {
+        return try {
+            val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            val adapter = bluetoothManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
+            if (adapter == null) {
+                "อุปกรณ์ไม่รองรับบลูทูธ"
+            } else if (!adapter.isEnabled) {
+                "บลูทูธปิดอยู่ (แตะปุ่มตั้งค่าเพื่อเปิด)"
+            } else {
+                val outBt = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).find {
+                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    it.type == 26 || it.type == 27
+                }
+                val inBt = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find {
+                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26
+                }
+                val activeDev = inBt ?: outBt
+                if (activeDev != null) {
+                    val name = activeDev.productName?.toString() ?: "ไมค์/ลำโพงบลูทูธ"
+                    "🟢 เชื่อมต่อแล้ว: $name"
+                } else {
+                    val bonded = getBondedAudioDevices()
+                    if (bonded.isNotEmpty()) {
+                        "🔵 พร้อมเชื่อมต่อ: ${bonded.first()}"
+                    } else {
+                        "🔵 พร้อมจับคู่ไมค์/ลำโพงบลูทูธ"
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            "พร้อมใช้งานบลูทูธ"
+        }
     }
 
     /**

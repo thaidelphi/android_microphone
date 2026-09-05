@@ -41,6 +41,22 @@ class AudioLoopEngine(
         }
     }
 
+    var preferredInputItem: AudioDeviceItem? = null
+        set(value) {
+            val wasBt = field?.isBluetooth == true
+            val isBt = value?.isBluetooth == true
+            field = value
+            preferredInputDevice = value?.deviceInfo
+            deviceManager.routeToInput(value)
+            if (isRunning) {
+                if (wasBt != isBt) {
+                    restart()
+                } else {
+                    restartAudioRecord()
+                }
+            }
+        }
+
     var preferredInputDevice: AudioDeviceInfo? = null
         set(value) {
             val wasBt = field?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || field?.type == 26 || field?.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || field?.id == 9999
@@ -52,6 +68,19 @@ class AudioLoopEngine(
                     restart()
                 } else {
                     restartAudioRecord()
+                }
+            }
+        }
+
+    var preferredOutputItem: AudioDeviceItem? = null
+        set(value) {
+            field = value
+            preferredOutputDevice = value?.deviceInfo
+            deviceManager.routeToOutput(value)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && isRunning) {
+                val target = value?.deviceInfo ?: if (value?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) deviceManager.getBuiltinSpeakerDevice() else null
+                if (target != null) {
+                    audioTrack?.preferredDevice = target
                 }
             }
         }
@@ -74,6 +103,16 @@ class AudioLoopEngine(
                 preferredOutputDevice = null
             }
         }
+
+    fun isBluetoothMicActive(): Boolean {
+        return preferredInputItem?.isBluetooth == true ||
+               deviceManager.selectedInputItem?.isBluetooth == true ||
+               preferredInputDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+               preferredInputDevice?.type == 26 ||
+               preferredInputDevice?.id == 9999 ||
+               deviceManager.selectedInputDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+               deviceManager.selectedInputDevice?.type == 26
+    }
 
     var onAudioLevelUpdated: ((peak: Float, rms: Float, db: Float) -> Unit)? = null
     var onError: ((message: String) -> Unit)? = null
@@ -138,10 +177,7 @@ class AudioLoopEngine(
             oldRecord?.release()
 
             val targetDev = preferredInputDevice ?: deviceManager.selectedInputDevice
-            val isBtMic = targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                          targetDev?.type == 26 ||
-                          targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                          targetDev?.id == 9999 || targetDev?.id == 8888
+            val isBtMic = isBluetoothMicActive()
             val sampleRates = if (isBtMic) intArrayOf(16000, 8000, 48000, 44100) else intArrayOf(48000, 44100)
             val sources = if (isBtMic) {
                 intArrayOf(
@@ -192,7 +228,7 @@ class AudioLoopEngine(
                 }
                 record.startRecording()
                 audioRecord = record
-                Log.i(TAG, "AudioRecord successfully restarted with device: ${targetDev?.type} at ${actualRecordSampleRate}Hz")
+                Log.i(TAG, "AudioRecord successfully restarted with isBtMic=$isBtMic at ${actualRecordSampleRate}Hz")
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Error in restartAudioRecord", e)
@@ -206,8 +242,16 @@ class AudioLoopEngine(
 
         try {
             // Apply input & output routing
-            deviceManager.routeToInput(preferredInputDevice)
-            deviceManager.applyRouting(forceSpeaker)
+            if (preferredInputItem != null) {
+                deviceManager.routeToInput(preferredInputItem)
+            } else {
+                deviceManager.routeToInput(preferredInputDevice)
+            }
+            if (preferredOutputItem != null) {
+                deviceManager.routeToOutput(preferredOutputItem)
+            } else {
+                deviceManager.applyRouting(forceSpeaker)
+            }
 
             val minTrackBufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNEL_OUT, AUDIO_FORMAT)
             if (minTrackBufferSize <= 0) {
@@ -218,10 +262,7 @@ class AudioLoopEngine(
             // 1. Initialize AudioRecord (supports 16kHz native SCO or 48kHz)
             var record: AudioRecord? = null
             val targetDev = preferredInputDevice ?: deviceManager.selectedInputDevice
-            val isBtMic = targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                          targetDev?.type == 26 ||
-                          targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                          targetDev?.id == 9999 || targetDev?.id == 8888
+            val isBtMic = isBluetoothMicActive()
             val sampleRates = if (isBtMic) intArrayOf(16000, 8000, 48000, 44100) else intArrayOf(48000, 44100)
             val sources = if (isBtMic) {
                 intArrayOf(
@@ -320,7 +361,7 @@ class AudioLoopEngine(
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val outDev = preferredOutputDevice ?: if (forceSpeaker) deviceManager.getBuiltinSpeakerDevice() else null
+                val outDev = preferredOutputDevice ?: if (preferredOutputItem?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || forceSpeaker) deviceManager.getBuiltinSpeakerDevice() else null
                 if (outDev != null) {
                     audioTrack?.preferredDevice = outDev
                     Log.i(TAG, "AudioTrack routed to device: ${outDev.type}")

@@ -109,7 +109,7 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- Audio Routing Card -->
+        <!-- Bluetooth & Audio Routing Card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -117,6 +117,7 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <!-- Card Header: Bluetooth & Audio Menu -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -124,27 +125,101 @@
                 android:orientation="horizontal">
 
                 <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:src="@drawable/ic_mic"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_bluetooth"
                     app:tint="@color/cyan_accent"
                     android:contentDescription="@null" />
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
+                    android:layout_weight="1"
                     android:text="@string/title_routing"
                     android:textColor="@color/text_primary"
                     android:textSize="15sp"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvBtBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_badge"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="4dp"
+                    android:text="🔵 บลูทูธ"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
             </LinearLayout>
+
+            <!-- Bluetooth Status Info line -->
+            <TextView
+                android:id="@+id/tvBtStatusDesc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="🔵 ตรวจสอบสัญญาณบลูทูธ..."
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <!-- Bluetooth Action Buttons (Settings & Refresh) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOpenBtSettings"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="5dp"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="8dp"
+                    android:text="@string/btn_bt_settings"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="12sp"
+                    app:backgroundTint="@color/bg_card_secondary"
+                    app:cornerRadius="8dp"
+                    app:icon="@drawable/ic_bluetooth"
+                    app:iconPadding="4dp"
+                    app:iconSize="16dp"
+                    app:iconTint="@color/cyan_accent"
+                    app:strokeColor="@color/card_border"
+                    app:strokeWidth="1dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRefreshDevices"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="5dp"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="8dp"
+                    android:text="@string/btn_refresh_devices"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    app:backgroundTint="@color/bg_card_secondary"
+                    app:cornerRadius="8dp"
+                    app:strokeColor="@color/card_border"
+                    app:strokeWidth="1dp" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginVertical="12dp"
+                android:background="@color/card_border" />
 
             <!-- Input Selection -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
                 android:text="@string/input_source"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
@@ -166,27 +241,12 @@
                 android:background="@color/card_border" />
 
             <!-- Output Selection -->
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <ImageView
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
-                    android:src="@drawable/ic_bluetooth"
-                    app:tint="@color/cyan_accent"
-                    android:contentDescription="@null" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:text="@string/output_route"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp" />
-            </LinearLayout>
+                android:text="@string/output_route"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
 
             <Spinner
                 android:id="@+id/spinnerOutputRoute"
@@ -201,8 +261,8 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="สามารถเลือกให้เสียงออกทาง ลำโพงตัวเครื่องมือถือ หรือ ลำโพงบลูทูธ ได้ตามต้องการ"
+                android:layout_marginTop="8dp"
+                android:text="💡 แนะนำ: เลือกไมค์บลูทูธ (Input) + ลำโพงตัวเครื่อง (Output) เพื่อใช้มือถือเป็นโทรโข่งไร้สาย"
                 android:textColor="@color/text_tertiary"
                 android:textSize="11sp" />
         </LinearLayout>
