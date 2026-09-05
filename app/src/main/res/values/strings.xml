@@ -1,0 +1,54 @@
+<resources>
+    <string name="app_name">Android MIC Amplifier</string>
+    <string name="subtitle">ไมค์ขยายเสียงออกลำโพงมือถือ (Megaphone)</string>
+    
+    <!-- Status Labels -->
+    <string name="status_standby">พร้อมใช้งาน (Standby)</string>
+    <string name="status_active">กำลังขยายเสียง (Broadcasting Live)</string>
+    <string name="btn_start">เปิดไมค์ขยายเสียง</string>
+    <string name="btn_stop">ปิดการขยายเสียง</string>
+    
+    <!-- Routing Info -->
+    <string name="title_routing">การเชื่อมต่อเสียง (Audio Routing)</string>
+    <string name="input_source">เสียงเข้า (Input):</string>
+    <string name="output_route">เสียงออก (Output):</string>
+    <string name="output_speaker_forced">ลำโพงตัวเครื่อง (Built-in Speaker)</string>
+    <string name="force_speaker_title">บังคับออกลำโพงมือถือ</string>
+    <string name="force_speaker_desc">แม้เสียบหูฟัง เสียงพูดจะถูกขับออกทางลำโพงตัวเครื่อง</string>
+    
+    <!-- Anti-Howling Feedback Suppressor -->
+    <string name="title_antihowl">ระบบตัดเสียงหวีดหอน (Anti-Feedback)</string>
+    <string name="antihowl_desc">ทำลายวงจรเสียงหอนด้วย Frequency Shift (+5Hz), Bandpass Filter และ Auto-Squelch</string>
+    <string name="antihowl_aggressive">โหมดกันหอนเข้มงวด (Aggressive Notch)</string>
+    <string name="antihowl_aggressive_desc">ตัดย่านเรโซแนนซ์ 3.1kHz เพิ่มเติม เหมาะเมื่อเปิดเสียงดัง</string>
+
+    <!-- Vocal Karaoke Echo -->
+    <string name="title_echo">โหมดเสียงก้องร้องเพลง (Karaoke Echo)</string>
+    <string name="echo_desc">เพิ่มมิติเสียงสะท้อน (Vocal Reverb Delay) ให้เสียงร้องก้องกังวาน นุ่มนวล</string>
+    <string name="echo_volume">ระดับเสียงสะท้อน (Echo Volume): %s</string>
+    <string name="echo_volume_desc">ความดังของเสียงสะท้อนผสมกับเสียงร้อง</string>
+    <string name="echo_delay">จังหวะการสะท้อน (Delay Time): %s ms</string>
+    <string name="echo_delay_desc">ความเร็วของเสียงสะท้อน (200–240ms มาตรฐานคาราโอเกะ)</string>
+    <string name="echo_repeats">จำนวนครั้งที่สะท้อน (Repeats / Decay): %s</string>
+    <string name="echo_repeats_desc">ความยาวของการสะท้อนวนซ้ำก่อนจะจางหาย</string>
+
+    <!-- Gain & Volume Controls -->
+    <string name="title_dsp">ปรับแต่งเสียง (Audio Enhancer)</string>
+    <string name="gain_boost">ขยายความดัง (Gain Boost): %s</string>
+    <string name="gain_boost_desc">เพิ่มความแรงของสัญญาณเสียงพูด (มีระบบป้องกันเสียงแตก Limiter)</string>
+    <string name="noise_gate">ตัดเสียงรบกวน (Noise Gate): %s</string>
+    <string name="noise_gate_desc">ตัดเสียงซ่าเมื่อไม่ได้พูด เพื่อความเงียบสนิท</string>
+    
+    <!-- Warning and Tips -->
+    <string name="warning_title">ระบบตัดเสียงหอนทำงานอัตโนมัติ</string>
+    <string name="warning_feedback_tip">ระบบเปิดใช้ Frequency Shift และ Voice Filter ช่วยป้องกันเสียงหอนให้แล้ว และหากใช้คู่กับหูฟังสมอลทอล์ก (Wired/Bluetooth) จะสามารถเร่งเสียงได้ดังสูงสุดโดยไม่หอนเลย</string>
+
+    <!-- Notification -->
+    <string name="notif_channel_name">บริการขยายเสียงไมโครโฟน</string>
+    <string name="notif_title">ไมโครโฟนกำลังทำงาน</string>
+    <string name="notif_content">กำลังส่งเสียงไมค์ออกลำโพงมือถืออย่างต่อเนื่อง</string>
+    <string name="notif_stop">ปิดไมค์</string>
+
+    <!-- Permissions -->
+    <string name="permission_rationale">จำเป็นต้องใช้สิทธิ์เข้าถึงไมโครโฟนเพื่อบันทึกเสียงและส่งออกลำโพงแบบเรียลไทม์</string>
+</resources>
