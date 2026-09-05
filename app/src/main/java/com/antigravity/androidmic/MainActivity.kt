@@ -300,7 +300,11 @@ class MainActivity : AppCompatActivity() {
                     val selected = inputDevices[position]
                     amplifierService?.engine?.preferredInputDevice = selected.deviceInfo
 
-                    val isBt = selected.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || selected.type == 26
+                    val isBt = selected.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                               selected.type == 26 ||
+                               selected.id == 9999 ||
+                               selected.name.contains("บลูทูธ") ||
+                               selected.name.contains("Bluetooth")
                     if (isBt) {
                         Toast.makeText(this@MainActivity, "🎙️ กำลังเชื่อมสัญญาณเสียงไมค์บลูทูธ: ${selected.name}", Toast.LENGTH_SHORT).show()
                     }
@@ -332,6 +336,12 @@ class MainActivity : AppCompatActivity() {
                 if (position in outputDevices.indices) {
                     val selected = outputDevices[position]
                     amplifierService?.engine?.preferredOutputDevice = selected.deviceInfo
+                    if (selected.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                        selected.id == 8888 ||
+                        selected.name.contains("บลูทูธ") ||
+                        selected.name.contains("Bluetooth")) {
+                        Toast.makeText(this@MainActivity, "📻 เลือกส่งเสียงออก: ${selected.name}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
 

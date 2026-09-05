@@ -305,18 +305,33 @@ class AudioDeviceManager(private val context: Context) {
                 val btName = try { btOutput.productName?.toString() } catch (e: Throwable) { null } ?: ""
                 list.add(0, AudioDeviceItem(
                     id = 9999,
-                    name = "ไมค์บลูทูธ (Bluetooth Mic: $btName)".trim(),
+                    name = "🎙️ ไมค์บลูทูธ (Bluetooth Mic: $btName)".trim(),
                     type = AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
                     isSource = true,
                     deviceInfo = btOutput
+                ))
+            }
+
+            // ALWAYS guarantee Bluetooth Mic option is in the list!
+            if (list.none { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 || it.id == 9999 }) {
+                list.add(0, AudioDeviceItem(
+                    id = 9999,
+                    name = "🎙️ ไมค์บลูทูธ (Bluetooth Mic)",
+                    type = AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                    isSource = true,
+                    deviceInfo = null
                 ))
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Error querying audio input devices", e)
         }
 
-        if (list.isEmpty()) {
-            list.add(AudioDeviceItem(0, "ไมค์ตัวเครื่อง (Default Mic)", AudioDeviceInfo.TYPE_BUILTIN_MIC, true))
+        // Always ensure Bluetooth Mic and Phone Mic are in list
+        if (list.none { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 || it.id == 9999 }) {
+            list.add(0, AudioDeviceItem(9999, "🎙️ ไมค์บลูทูธ (Bluetooth Mic)", AudioDeviceInfo.TYPE_BLUETOOTH_SCO, true))
+        }
+        if (list.none { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }) {
+            list.add(AudioDeviceItem(0, "📱 ไมค์ตัวเครื่องมือถือ (Phone Mic)", AudioDeviceInfo.TYPE_BUILTIN_MIC, true))
         }
 
         return list
@@ -361,6 +376,11 @@ class AudioDeviceManager(private val context: Context) {
         // Always ensure Phone Speaker is in the list
         if (list.none { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }) {
             list.add(0, AudioDeviceItem(0, "🔊 ลำโพงตัวเครื่องมือถือ (Phone Speaker)", AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, false, getBuiltinSpeakerDevice()))
+        }
+
+        // Always ensure Bluetooth Speaker is in the list!
+        if (list.none { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 || it.type == 27 || it.id == 8888 }) {
+            list.add(AudioDeviceItem(8888, "📻 ลำโพงบลูทูธ (Bluetooth Speaker)", AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, false))
         }
 
         return list
