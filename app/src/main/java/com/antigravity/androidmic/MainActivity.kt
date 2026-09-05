@@ -147,6 +147,9 @@ class MainActivity : AppCompatActivity() {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 permissionsNeeded.add(Manifest.permission.BLUETOOTH_CONNECT)
             }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                permissionsNeeded.add(Manifest.permission.BLUETOOTH_SCAN)
+            }
         }
         if (permissionsNeeded.isNotEmpty()) {
             initialPermissionLauncher.launch(permissionsNeeded.toTypedArray())
@@ -370,8 +373,11 @@ class MainActivity : AppCompatActivity() {
             val headsetIndex = inDevs.indexOfFirst {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
                 it.type == 26 /* BLE_HEADSET */ ||
-                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                it.id == 9999 ||
+                it.name.contains("บลูทูธ") ||
+                it.name.contains("Bluetooth") ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET
             }
             val targetInputIdx = if (headsetIndex >= 0) headsetIndex else 0
             if (targetInputIdx in inDevs.indices) {
@@ -430,6 +436,9 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 permissionsNeeded.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                permissionsNeeded.add(Manifest.permission.BLUETOOTH_SCAN)
             }
         }
 

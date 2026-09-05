@@ -43,10 +43,16 @@ class AudioLoopEngine(
 
     var preferredInputDevice: AudioDeviceInfo? = null
         set(value) {
+            val wasBt = field?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || field?.type == 26 || field?.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || field?.id == 9999
+            val isBt = value?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || value?.type == 26 || value?.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || value?.id == 9999
             field = value
             deviceManager.routeToInput(value)
             if (isRunning) {
-                restartAudioRecord()
+                if (wasBt != isBt) {
+                    restart()
+                } else {
+                    restartAudioRecord()
+                }
             }
         }
 
@@ -132,13 +138,16 @@ class AudioLoopEngine(
             oldRecord?.release()
 
             val targetDev = preferredInputDevice ?: deviceManager.selectedInputDevice
-            val isBtMic = targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || targetDev?.type == 26
-            val sampleRates = if (isBtMic) intArrayOf(16000, 48000, 8000) else intArrayOf(48000, 44100)
+            val isBtMic = targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                          targetDev?.type == 26 ||
+                          targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                          targetDev?.id == 9999 || targetDev?.id == 8888
+            val sampleRates = if (isBtMic) intArrayOf(16000, 8000, 48000, 44100) else intArrayOf(48000, 44100)
             val sources = if (isBtMic) {
                 intArrayOf(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                    MediaRecorder.AudioSource.MIC,
                     MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     MediaRecorder.AudioSource.DEFAULT
                 )
             } else {
@@ -209,13 +218,16 @@ class AudioLoopEngine(
             // 1. Initialize AudioRecord (supports 16kHz native SCO or 48kHz)
             var record: AudioRecord? = null
             val targetDev = preferredInputDevice ?: deviceManager.selectedInputDevice
-            val isBtMic = targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || targetDev?.type == 26
-            val sampleRates = if (isBtMic) intArrayOf(16000, 48000, 8000) else intArrayOf(48000, 44100)
+            val isBtMic = targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                          targetDev?.type == 26 ||
+                          targetDev?.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                          targetDev?.id == 9999 || targetDev?.id == 8888
+            val sampleRates = if (isBtMic) intArrayOf(16000, 8000, 48000, 44100) else intArrayOf(48000, 44100)
             val sources = if (isBtMic) {
                 intArrayOf(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                    MediaRecorder.AudioSource.MIC,
                     MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     MediaRecorder.AudioSource.DEFAULT
                 )
             } else {
@@ -269,10 +281,10 @@ class AudioLoopEngine(
             // which causes microphone loopback/megaphone apps to be completely silenced!
             // Anti-howling is handled cleanly via our software AntiHowlProcessor.
 
-            // 2. Initialize AudioTrack with USAGE_MEDIA / STREAM_MUSIC for full volume and Bluetooth A2DP support
+            // 2. Initialize AudioTrack with appropriate stream/usage
             val audioAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .setUsage(if (isBtMic) AudioAttributes.USAGE_VOICE_COMMUNICATION else AudioAttributes.USAGE_MEDIA)
+                .setContentType(if (isBtMic) AudioAttributes.CONTENT_TYPE_SPEECH else AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build()
 
             val audioFormatObj = AudioFormat.Builder()
@@ -292,7 +304,7 @@ class AudioLoopEngine(
             } else {
                 @Suppress("DEPRECATION")
                 AudioTrack(
-                    AudioManager.STREAM_MUSIC,
+                    if (isBtMic) AudioManager.STREAM_VOICE_CALL else AudioManager.STREAM_MUSIC,
                     SAMPLE_RATE,
                     CHANNEL_OUT,
                     AUDIO_FORMAT,
@@ -315,12 +327,17 @@ class AudioLoopEngine(
                 }
             }
 
-            // Ensure media volume is not completely muted on the device
+            // Ensure volumes are active on the device
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             if (currentVol == 0) {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxVol * 0.7f).toInt(), AudioManager.FLAG_SHOW_UI)
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxVol * 0.85f).toInt(), AudioManager.FLAG_SHOW_UI)
+            }
+            val currentCallVol = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+            val maxCallVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+            if (currentCallVol == 0) {
+                audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, (maxCallVol * 0.85f).toInt(), AudioManager.FLAG_SHOW_UI)
             }
 
             // 4. Start recording and playback streams
@@ -357,6 +374,10 @@ class AudioLoopEngine(
                     }
 
                     val readCount = activeRecord.read(inRawBuffer, 0, inChunk)
+                    if (readCount <= 0) {
+                        try { Thread.sleep(10) } catch (e: InterruptedException) { break }
+                        continue
+                    }
                     if (readCount > 0) {
                         val finalCount: Int
                         if (inRate == 16000) {
@@ -412,6 +433,13 @@ class AudioLoopEngine(
 
         cleanup()
         Log.i(TAG, "AudioLoopEngine stopped")
+    }
+
+    @Synchronized
+    fun restart() {
+        if (!isRunning) return
+        stop()
+        start()
     }
 
     private fun cleanup() {

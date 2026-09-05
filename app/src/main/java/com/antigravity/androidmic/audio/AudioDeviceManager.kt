@@ -142,26 +142,45 @@ class AudioDeviceManager(private val context: Context) {
 
             val isBluetoothMic = inTarget != null && (
                 inTarget.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                inTarget.type == 26 /* TYPE_BLE_HEADSET */
+                inTarget.type == 26 /* TYPE_BLE_HEADSET */ ||
+                inTarget.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                inTarget.id == 9999 || inTarget.id == 8888
             )
 
-            // Keep system in MODE_NORMAL so AudioTrack USAGE_MEDIA is NEVER muted/ducked by telephony policy
-            audioManager.mode = AudioManager.MODE_NORMAL
-
             if (isBluetoothMic) {
-                // Bluetooth SCO microphone requires startBluetoothSco
-                Log.i(TAG, "Activating Bluetooth SCO microphone link...")
+                // Must be MODE_IN_COMMUNICATION for Bluetooth SCO / HFP on Android!
+                Log.i(TAG, "Activating Bluetooth Communication mode (MODE_IN_COMMUNICATION)...")
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+
+                // Android 12+ Communication Device routing
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val commDevices = audioManager.availableCommunicationDevices
+                    val btComm = commDevices.find {
+                        it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                        it.type == 26 /* TYPE_BLE_HEADSET */
+                    } ?: if (inTarget?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || inTarget?.type == 26) inTarget else null
+
+                    if (btComm != null) {
+                        val ok = audioManager.setCommunicationDevice(btComm)
+                        Log.i(TAG, "setCommunicationDevice(${btComm.productName}) = $ok")
+                    } else {
+                        Log.w(TAG, "No Bluetooth communication device in availableCommunicationDevices")
+                    }
+                }
+
+                // Call startBluetoothSco for backward compatibility and all Android versions
                 @Suppress("DEPRECATION")
                 if (!audioManager.isBluetoothScoOn && !isScoStarted) {
                     isScoStarted = true
                     try {
                         audioManager.startBluetoothSco()
+                        audioManager.isBluetoothScoOn = true
                     } catch (e: Throwable) {
                         Log.e(TAG, "startBluetoothSco error", e)
                     }
                 }
 
-                // If output is built-in speaker, ensure loudspeaker is forced on
+                // If output is built-in speaker, force speakerphone on
                 if (outTarget == null || outTarget.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = true
@@ -169,18 +188,27 @@ class AudioDeviceManager(private val context: Context) {
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = false
                 }
+
+                // Maximize call stream and music volume
+                try {
+                    val maxCall = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                    audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxCall, 0)
+                    val maxMusic = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxMusic * 0.85f).toInt(), 0)
+                } catch (e: Throwable) {}
             } else {
                 // Non-Bluetooth microphone (Phone mic, Wired headset, USB mic)
-                @Suppress("DEPRECATION")
-                if (audioManager.isBluetoothScoOn || isScoStarted) {
-                    try {
-                        audioManager.stopBluetoothSco()
-                    } catch (e: Throwable) {}
-                    audioManager.isBluetoothScoOn = false
-                    isScoStarted = false
-                }
+                audioManager.mode = AudioManager.MODE_NORMAL
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     audioManager.clearCommunicationDevice()
+                }
+
+                @Suppress("DEPRECATION")
+                if (audioManager.isBluetoothScoOn || isScoStarted) {
+                    try { audioManager.stopBluetoothSco() } catch (e: Throwable) {}
+                    audioManager.isBluetoothScoOn = false
+                    isScoStarted = false
                 }
 
                 if (outTarget != null && outTarget.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
@@ -226,6 +254,7 @@ class AudioDeviceManager(private val context: Context) {
     fun getAvailableInputDevices(): List<AudioDeviceItem> {
         val list = mutableListOf<AudioDeviceItem>()
         try {
+            // 1. Standard Audio inputs
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
 
             for (dev in devices) {
@@ -237,13 +266,50 @@ class AudioDeviceManager(private val context: Context) {
 
                 val name = when (dev.type) {
                     AudioDeviceInfo.TYPE_WIRED_HEADSET -> "หูฟังมีสาย (Wired Headset Mic)"
-                    AudioDeviceInfo.TYPE_USB_HEADSET -> "หูฟัง USB-C (USB Headset Mic)"
+                    AudioDeviceInfo.TYPE_USB_HEADSET -> "หูฟัง/ไมค์ USB-C (USB Headset Mic)"
                     AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "ไมค์บลูทูธ (Bluetooth Mic: ${productName ?: ""})".trim()
                     26 /* TYPE_BLE_HEADSET */ -> "ไมค์บลูทูธ BLE (Bluetooth BLE Mic: ${productName ?: ""})".trim()
                     AudioDeviceInfo.TYPE_BUILTIN_MIC -> "ไมค์ตัวเครื่องมือถือ (Phone Mic)"
                     else -> if (!productName.isNullOrBlank()) "ไมโครโฟนภายนอก ($productName)" else "ไมโครโฟนภายนอก (External Mic)"
                 }
                 list.add(AudioDeviceItem(dev.id, name, dev.type, isSource = true, deviceInfo = dev))
+            }
+
+            // 2. On Android 12+ (API 31+), check availableCommunicationDevices
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val commDevices = audioManager.availableCommunicationDevices
+                for (dev in commDevices) {
+                    if (dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                        dev.type == 26 /* TYPE_BLE_HEADSET */ ||
+                        dev.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                        dev.type == AudioDeviceInfo.TYPE_USB_HEADSET) {
+                        val isAlreadyIn = list.any { it.deviceInfo?.id == dev.id || it.type == dev.type }
+                        if (!isAlreadyIn) {
+                            val productName = try { dev.productName?.toString() } catch (e: Throwable) { null }
+                            val name = "ไมค์บลูทูธ (Bluetooth Mic: ${productName ?: ""})".trim()
+                            list.add(0, AudioDeviceItem(dev.id, name, dev.type, isSource = true, deviceInfo = dev))
+                        }
+                    }
+                }
+            }
+
+            // 3. Check GET_DEVICES_OUTPUTS for connected Bluetooth devices (A2DP / SCO)
+            val outputDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            val btOutput = outputDevices.find {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                it.type == 26 || it.type == 27
+            }
+            val hasBtInList = list.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 }
+            if (btOutput != null && !hasBtInList) {
+                val btName = try { btOutput.productName?.toString() } catch (e: Throwable) { null } ?: ""
+                list.add(0, AudioDeviceItem(
+                    id = 9999,
+                    name = "ไมค์บลูทูธ (Bluetooth Mic: $btName)".trim(),
+                    type = AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                    isSource = true,
+                    deviceInfo = btOutput
+                ))
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Error querying audio input devices", e)
