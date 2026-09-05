@@ -1,7 +1,10 @@
 package com.antigravity.androidmic.audio
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
@@ -32,12 +35,17 @@ class AudioLoopEngine(
 
     val deviceManager = AudioDeviceManager(context)
 
-    init {
-        deviceManager.onScoAudioConnected = {
-            // SCO is now connected — find the real BT SCO device and restart AudioRecord
-            Log.i(TAG, "Bluetooth SCO connected! Rebinding AudioRecord to real BT device...")
-            if (isRunning) {
-                // Look up the actual connected SCO device NOW (it should be visible post-SCO)
+    // Public callback for UI to receive SCO connection events (does NOT affect internal logic)
+    var onScoConnected: (() -> Unit)? = null
+
+    // Engine's own SCO receiver — independent, cannot be overridden by external code
+    private val engineScoReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent?.action != AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED) return
+            val state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
+            if (state == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
+                Log.i(TAG, "[EngineSCO] SCO CONNECTED — searching for real BT SCO input device...")
+                // Find the real BT SCO hardware device now that SCO is live
                 val btScoDevice = try {
                     val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -54,15 +62,40 @@ class AudioLoopEngine(
                 } catch (e: Throwable) { null }
 
                 if (btScoDevice != null) {
-                    Log.i(TAG, "Found real BT SCO device: ${btScoDevice.productName} (id=${btScoDevice.id})")
-                    // Update preferredInputDevice to real hardware device
-                    preferredInputDevice = btScoDevice
-                } else {
-                    Log.w(TAG, "SCO connected but no device found in inputs, restarting AudioRecord anyway")
+                    Log.i(TAG, "[EngineSCO] Real BT SCO device found: ${btScoDevice.productName} id=${btScoDevice.id}")
+                    preferredInputDevice = btScoDevice   // triggers restartAudioRecord()
+                } else if (isRunning) {
+                    Log.w(TAG, "[EngineSCO] SCO connected but BT input device not found — restarting AudioRecord anyway")
                     restartAudioRecord()
                 }
+                // Notify UI (safe: runs on whatever thread the broadcast fires on)
+                onScoConnected?.invoke()
+            } else if (state == AudioManager.SCO_AUDIO_STATE_DISCONNECTED) {
+                Log.i(TAG, "[EngineSCO] SCO DISCONNECTED")
             }
         }
+    }
+    private var isEngineScoReceiverRegistered = false
+
+    init {
+        try {
+            val filter = IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+            context.registerReceiver(engineScoReceiver, filter)
+            isEngineScoReceiverRegistered = true
+            Log.d(TAG, "Engine SCO BroadcastReceiver registered")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to register engine SCO receiver", e)
+        }
+    }
+
+    fun release() {
+        if (isEngineScoReceiverRegistered) {
+            try {
+                context.unregisterReceiver(engineScoReceiver)
+                isEngineScoReceiverRegistered = false
+            } catch (e: Throwable) {}
+        }
+        deviceManager.release()
     }
 
     var preferredInputItem: AudioDeviceItem? = null

@@ -112,7 +112,8 @@ class MainActivity : AppCompatActivity() {
             binding.sliderEchoDelay.value = (echo.delayMs / 10 * 10).toFloat().coerceIn(80f, 420f)
             binding.sliderEchoRepeats.value = (echo.decay * 100.0f).toInt().toFloat().coerceIn(10f, 70f)
 
-            svc.engine.deviceManager.onScoAudioConnected = {
+            // SCO callback: UI only — engine handles AudioRecord rebinding internally via its own BroadcastReceiver
+            svc.engine.onScoConnected = {
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "🎙️ ไมค์บลูทูธเชื่อมต่อสัญญาณเสียงสำเร็จ (Bluetooth Mic Ready)", Toast.LENGTH_SHORT).show()
                     refreshDeviceList()

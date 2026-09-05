@@ -121,7 +121,7 @@ class MicAmplifierService : Service() {
 
     override fun onDestroy() {
         stopAmplifier()
-        engine.deviceManager.release()
+        engine.release()  // unregisters engine SCO receiver + deviceManager
         super.onDestroy()
     }
 
