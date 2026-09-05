@@ -365,6 +365,8 @@ class MainActivity : AppCompatActivity() {
                     val selected = inputDevices[position]
                     amplifierService?.engine?.preferredInputItem = selected
 
+                    syncDspControlsFromEngine()
+
                     if (selected.isBluetooth || selected.id == 9999 || selected.name.contains("บลูทูธ") || selected.name.contains("Bluetooth")) {
                         Toast.makeText(this@MainActivity, "🎙️ เลือกใช้: ${selected.name}", Toast.LENGTH_SHORT).show()
                     }
@@ -396,6 +398,7 @@ class MainActivity : AppCompatActivity() {
                 if (position in outputDevices.indices) {
                     val selected = outputDevices[position]
                     amplifierService?.engine?.preferredOutputItem = selected
+                    syncDspControlsFromEngine()
 
                     if (selected.isBluetooth || selected.id == 8888 || selected.name.contains("บลูทูธ") || selected.name.contains("Bluetooth")) {
                         Toast.makeText(this@MainActivity, "📻 ส่งเสียงออก: ${selected.name}", Toast.LENGTH_SHORT).show()
@@ -408,6 +411,23 @@ class MainActivity : AppCompatActivity() {
 
         // Immediate initial load so spinners are never empty
         loadInitialDevices()
+    }
+
+    private fun syncDspControlsFromEngine() {
+        val svc = amplifierService ?: return
+        val dsp = svc.engine.dspProcessor
+        binding.switchAntiHowl.isChecked = dsp.antiHowl.isEnabled
+        binding.switchAggressiveNotch.isChecked = dsp.antiHowl.isAggressiveMode
+        binding.sliderGain.value = dsp.gain.coerceIn(1.0f, 6.0f)
+        val dbVal = (20.0 * log10(dsp.gain.toDouble())).toInt()
+        binding.tvGainLabel.text = "ขยายความดัง (Gain Boost): ${String.format("%.1f", dsp.gain)}x (+${dbVal} dB)"
+        val gatePct = (dsp.noiseGateThreshold * 100.0f).coerceIn(0.0f, 8.0f)
+        binding.sliderNoiseGate.value = gatePct
+        if (gatePct <= 0.05f) {
+            binding.tvNoiseGateLabel.text = "ตัดเสียงรบกวน (Noise Gate): ปิด (0%)"
+        } else {
+            binding.tvNoiseGateLabel.text = "ตัดเสียงรบกวน (Noise Gate): ${String.format("%.1f", gatePct)}%"
+        }
     }
 
     private fun loadInitialDevices() {

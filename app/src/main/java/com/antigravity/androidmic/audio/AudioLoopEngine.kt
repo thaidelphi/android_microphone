@@ -119,6 +119,7 @@ class AudioLoopEngine(
             } else {
                 deviceManager.routeToInput(value)
             }
+            autoConfigureAntiHowl()  // Auto-enable aggressive mode for BT mic + speaker combo
             if (isRunning) {
                 if (wasBt != isBt) {
                     restart()
@@ -157,6 +158,7 @@ class AudioLoopEngine(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && isRunning && realDev != null) {
                 audioTrack?.preferredDevice = realDev
             }
+            autoConfigureAntiHowl()  // Auto-adjust anti-howl when output changes
         }
 
     var preferredOutputDevice: AudioDeviceInfo? = null
@@ -202,6 +204,37 @@ class AudioLoopEngine(
 
     val isActive: Boolean
         get() = isRunning
+
+    /**
+     * Auto-configure AntiHowl aggressiveness based on input/output device combination.
+     * BT mic + phone speaker = HIGHEST feedback risk → force Aggressive mode ON, cap gain, and enable noise gate.
+     * BT mic + BT speaker = moderate risk (SCO output) → normal mode.
+     * Phone mic + phone speaker = normal (user's responsibility) → keep current setting.
+     */
+    fun autoConfigureAntiHowl() {
+        val isBtMicSelected = isBluetoothMicActive() || preferredInputItem?.isBluetooth == true
+        val isPhoneSpeakerSelected = preferredOutputItem?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                                  || preferredOutputItem == null  // default = phone speaker
+
+        if (isBtMicSelected && isPhoneSpeakerSelected) {
+            // BT mic + phone speaker: Maximum feedback risk
+            dspProcessor.antiHowl.isEnabled = true
+            dspProcessor.antiHowl.isAggressiveMode = true
+
+            // If gain is dangerously high (> 1.4x), reset to safe 1.0x to avoid immediate feedback squeal
+            if (dspProcessor.gain > 1.4f) {
+                dspProcessor.gain = 1.0f
+                Log.i(TAG, "AutoAntiHowl: Gain safely reset to 1.0x for phone speaker")
+            }
+
+            // Ensure noise gate is at least 2% to cut background feedback loop during pauses
+            if (dspProcessor.noiseGateThreshold < 0.02f) {
+                dspProcessor.noiseGateThreshold = 0.02f
+            }
+            Log.i(TAG, "AutoAntiHowl: BT mic + phone speaker detected → Aggressive Anti-Howl & Safety Gain active")
+        }
+    }
+
 
     private fun upsample16kTo48k(input: ShortArray, inCount: Int, output: ShortArray): Int {
         if (inCount <= 0) return 0
@@ -323,6 +356,35 @@ class AudioLoopEngine(
                         Log.w(TAG, "Could not set preferredDevice: ${e.message}")
                     }
                 }
+
+                // Explicitly disable hardware AutomaticGainControl to prevent runaway feedback
+                try {
+                    autoGainControl?.release()
+                    autoGainControl = null
+                    if (AutomaticGainControl.isAvailable()) {
+                        autoGainControl = AutomaticGainControl.create(record.audioSessionId)?.apply {
+                            enabled = false
+                        }
+                        Log.i(TAG, "Hardware AutomaticGainControl explicitly DISABLED")
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Could not configure AGC: ${e.message}")
+                }
+
+                // Enable hardware NoiseSuppressor if available to clean ambient noise
+                try {
+                    noiseSuppressor?.release()
+                    noiseSuppressor = null
+                    if (NoiseSuppressor.isAvailable()) {
+                        noiseSuppressor = NoiseSuppressor.create(record.audioSessionId)?.apply {
+                            enabled = true
+                        }
+                        Log.i(TAG, "Hardware NoiseSuppressor enabled")
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Could not enable NoiseSuppressor: ${e.message}")
+                }
+
                 record.startRecording()
                 audioRecord = record
                 Log.i(TAG, "AudioRecord restarted OK at ${actualRecordSampleRate}Hz, isBtMic=$isBtMic")
@@ -442,10 +504,33 @@ class AudioLoopEngine(
                 }
             }
 
-            // NOTE: Hardware AcousticEchoCanceler is intentionally NOT enabled here.
-            // On Android, hardware AEC subtracts all speaker/loopback sound from mic input,
-            // which causes microphone loopback/megaphone apps to be completely silenced!
-            // Anti-howling is handled cleanly via our software AntiHowlProcessor.
+            // Explicitly disable hardware AutomaticGainControl to prevent runaway feedback
+            try {
+                autoGainControl?.release()
+                autoGainControl = null
+                if (AutomaticGainControl.isAvailable()) {
+                    autoGainControl = AutomaticGainControl.create(record.audioSessionId)?.apply {
+                        enabled = false
+                    }
+                    Log.i(TAG, "Hardware AutomaticGainControl explicitly DISABLED")
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Could not configure AGC: ${e.message}")
+            }
+
+            // Enable hardware NoiseSuppressor if available
+            try {
+                noiseSuppressor?.release()
+                noiseSuppressor = null
+                if (NoiseSuppressor.isAvailable()) {
+                    noiseSuppressor = NoiseSuppressor.create(record.audioSessionId)?.apply {
+                        enabled = true
+                    }
+                    Log.i(TAG, "Hardware NoiseSuppressor enabled")
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Could not enable NoiseSuppressor: ${e.message}")
+            }
 
             // 5. Initialize AudioTrack
             // KEY FIX: Always use USAGE_MEDIA + STREAM_MUSIC so audio routes to speaker properly.

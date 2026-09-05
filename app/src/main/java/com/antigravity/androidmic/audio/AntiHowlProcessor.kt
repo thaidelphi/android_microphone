@@ -7,45 +7,61 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * High-performance Digital Signal Processing (DSP) Anti-Feedback / Anti-Howling Engine:
- * 1. Frequency Shifter (+5 Hz Frequency Displacement to break acoustic standing-wave feedback loops)
- * 2. Voice Bandpass Filters (High-Pass 200 Hz & Low-Pass 4000 Hz to cut howling-prone resonances)
- * 3. Dynamic Howl / Sine-wave Resonance Detector with Automatic Ducking / Squelch
+ * High-performance DSP Anti-Feedback / Anti-Howling Engine:
+ * 1. Voice Bandpass Filters (HP 180Hz + LP 4200Hz) to cut howling-prone resonances
+ * 2. Multi-Band Notch Filters targeting smartphone acoustic resonance frequencies (800Hz, 1.6kHz, 2.5kHz, 3.15kHz)
+ * 3. True Single-Sideband (SSB) Frequency Shifter (+6 Hz via Hilbert / Hartley 90° allpass splitter)
+ *    to continuously disrupt acoustic standing-wave feedback loops
+ * 4. Fast Howl Detector with Hold-time Squelch & Smooth Recovery
  */
 class AntiHowlProcessor(private val sampleRate: Int = 48000) {
 
     var isEnabled: Boolean = true
-    var isAggressiveMode: Boolean = false
+    var isAggressiveMode: Boolean = true
 
-    // 1. Voice Bandpass Biquad Filters (200Hz - 4000Hz)
+    // 1. Voice Bandpass Biquad Filters (180Hz – 4200Hz)
     private val highPassFilter = BiquadFilter().apply {
-        setHighPass(sampleRate.toDouble(), 220.0, 0.707)
+        setHighPass(sampleRate.toDouble(), 180.0, 0.707)
     }
     private val lowPassFilter = BiquadFilter().apply {
-        setLowPass(sampleRate.toDouble(), 3800.0, 0.707)
-    }
-    private val antiResonanceNotch = BiquadFilter().apply {
-        // Typical mobile phone acoustic resonance cavity around 3.1 kHz
-        setNotch(sampleRate.toDouble(), 3150.0, 3.5)
+        setLowPass(sampleRate.toDouble(), 4200.0, 0.707)
     }
 
-    // 2. Frequency Shifter (+5 Hz shift via dual-pointer crossfade circular delay)
-    private val delayBufferSize = 2048
-    private val delayBuffer = FloatArray(delayBufferSize)
-    private var writeIndex = 0
-    private var readPhase1 = 0.0
-    // Frequency shift in Hz: +5.0 Hz
-    private val shiftHz = 5.5
-    // Delta per sample for reading
-    private val readSpeed = 1.0 + (shiftHz / sampleRate.toDouble())
+    // 2. Multi-Band Notch Filters for common smartphone resonance frequencies
+    private val notch800  = BiquadFilter().apply { setNotch(sampleRate.toDouble(),  800.0, 4.5) }
+    private val notch1600 = BiquadFilter().apply { setNotch(sampleRate.toDouble(), 1600.0, 4.5) }
+    private val notch2500 = BiquadFilter().apply { setNotch(sampleRate.toDouble(), 2500.0, 4.0) }
+    private val notch3150 = BiquadFilter().apply { setNotch(sampleRate.toDouble(), 3150.0, 5.0) }
 
-    // 3. Howl / Resonance Detection & Squelch
+    // 3. True SSB Frequency Shifter (+6 Hz)
+    // Uses 4-stage wideband 90-degree allpass phase splitter (Hartley / Weaver structure)
+    // Section A produces In-phase signal I, Section B produces Quadrature signal Q (shifted ~90°)
+    // y[n] = I * cos(theta) - Q * sin(theta) shifts all spectral components by +shiftHz
+    private val allpassPolesA = doubleArrayOf(0.161758, 0.733029, 0.945350, 0.990598)
+    private val allpassPolesB = doubleArrayOf(0.479401, 0.876218, 0.976599, 0.997500)
+
+    private val x1A = DoubleArray(4)
+    private val y1A = DoubleArray(4)
+    private val x1B = DoubleArray(4)
+    private val y1B = DoubleArray(4)
+
+    private val shiftHz = 6.0 // 6 Hz shift: completely imperceptible on speech, breaks all acoustic feedback
+    private val dTheta = 2.0 * PI * shiftHz / sampleRate.toDouble()
+    private var oscPhase = 0.0
+
+    // 4. Howl / Resonance Detection & Squelch
     private var sineWaveStreak = 0
     private var squelchGain = 1.0f
-    private val squelchRecovery = 0.05f
+    private var squelchHoldBuffers = 0 // Keep suppressed while acoustic echo dissipates
+
+    private val squelchRecoveryNormal     = 0.02f
+    private val squelchRecoveryAggressive = 0.01f
+
+    private val squelchFloorNormal     = 0.15f  // -16 dB
+    private val squelchFloorAggressive = 0.04f  // -28 dB (cuts howl instantly)
 
     /**
-     * Process 16-bit PCM audio buffer to eliminate feedback howling
+     * Process 16-bit PCM audio buffer in-place to eliminate feedback howling
      */
     fun process(buffer: ShortArray, readSize: Int) {
         if (!isEnabled || readSize <= 0) return
@@ -59,57 +75,67 @@ class AntiHowlProcessor(private val sampleRate: Int = 48000) {
             if (absSample > maxPeak) maxPeak = absSample
             sumSquare += rawSample * rawSample
 
-            // Step A: Bandpass filtering (removes sub-bass rumble & ultrasonic shrieks)
+            // Step A: Voice bandpass (cut sub-bass thumps + ultrasonic shrieks)
             var sample = highPassFilter.process(rawSample.toDouble())
             sample = lowPassFilter.process(sample)
 
+            // Step B: Multi-band notch filtering
+            // In normal mode: notch 3.15 kHz & 1.6 kHz (most common smartphone squeal frequencies)
+            sample = notch3150.process(sample)
+            sample = notch1600.process(sample)
+
             if (isAggressiveMode) {
-                sample = antiResonanceNotch.process(sample)
+                // Aggressive: additionally notch 800 Hz and 2.5 kHz
+                sample = notch800.process(sample)
+                sample = notch2500.process(sample)
             }
 
-            // Step B: Frequency Shifting (+5.5 Hz shift)
-            // Store filtered sample in circular buffer
-            delayBuffer[writeIndex] = sample.toFloat()
+            // Step C: True SSB Frequency Shifting (+6 Hz)
+            // Pass through 90-degree phase splitter
+            var inA = sample
+            for (k in 0 until 4) {
+                val p = allpassPolesA[k]
+                val out = -p * inA + x1A[k] + p * y1A[k]
+                x1A[k] = inA
+                y1A[k] = out
+                inA = out
+            }
+            val iVal = inA
 
-            // Calculate two read pointers 180 degrees apart in the window
-            val windowLen = delayBufferSize / 2.0
-            val p1 = readPhase1 % windowLen
-            val p2 = (readPhase1 + windowLen / 2.0) % windowLen
+            var inB = sample
+            for (k in 0 until 4) {
+                val p = allpassPolesB[k]
+                val out = -p * inB + x1B[k] + p * y1B[k]
+                x1B[k] = inB
+                y1B[k] = out
+                inB = out
+            }
+            val qVal = inB
 
-            // Triangular crossfade weights
-            val w1 = if (p1 < windowLen / 2.0) (p1 / (windowLen / 2.0)) else (2.0 - p1 / (windowLen / 2.0))
-            val w2 = 1.0 - w1
-
-            val readIdx1 = ((writeIndex - p1.toInt() + delayBufferSize) % delayBufferSize)
-            val readIdx2 = ((writeIndex - p2.toInt() + delayBufferSize) % delayBufferSize)
-
-            val shiftedSample = (delayBuffer[readIdx1] * w1 + delayBuffer[readIdx2] * w2).toFloat()
-
-            // Advance pointers
-            writeIndex = (writeIndex + 1) % delayBufferSize
-            readPhase1 += (readSpeed - 1.0)
-            if (readPhase1 >= windowLen * 1000.0) {
-                readPhase1 %= windowLen
+            // Single-sideband upshift: I*cos(theta) - Q*sin(theta)
+            val shiftedSample = (iVal * cos(oscPhase) - qVal * sin(oscPhase)).toFloat()
+            oscPhase += dTheta
+            if (oscPhase >= 2.0 * PI) {
+                oscPhase -= 2.0 * PI
             }
 
-            // Apply Squelch gain if howl is detected
+            // Step D: Apply squelch gain
             val finalSample = shiftedSample * squelchGain
-
-            // Convert back to PCM 16-bit
             val outputInt = (finalSample * 32767.0f).toInt()
             buffer[i] = outputInt.coerceIn(-32768, 32767).toShort()
         }
 
-        // Step C: Analyze buffer for Sine-Wave Resonance (Howling Signature)
+        // Step E: Howl / Resonance Detection
         val rms = sqrt(sumSquare / readSize).toFloat()
-        if (rms > 0.08f) { // Only check if sound is loud enough
+        if (rms > 0.04f) {
             val crestFactor = if (rms > 0.001f) (maxPeak / rms) else 10f
-            // Pure sine wave has crest factor ~1.414 (between 1.35 and 1.6)
-            if (crestFactor in 1.32f..1.65f) {
+            // Pure sine wave has crest factor ~1.414. Feedback in rooms/BT lies in 1.25..1.75
+            if (crestFactor in 1.25f..1.75f) {
                 sineWaveStreak++
-                if (sineWaveStreak >= 3) {
-                    // Howling detected! Immediately duck volume by 60%
-                    squelchGain = if (isAggressiveMode) 0.25f else 0.45f
+                if (sineWaveStreak >= 2) { // 2 buffers = ~20ms: fast detection before ear damage
+                    val floor = if (isAggressiveMode) squelchFloorAggressive else squelchFloorNormal
+                    squelchGain = minOf(squelchGain, floor)
+                    squelchHoldBuffers = 35 // Hold squelch for ~350ms to let room reflection die out
                 }
             } else {
                 sineWaveStreak = 0
@@ -118,9 +144,12 @@ class AntiHowlProcessor(private val sampleRate: Int = 48000) {
             sineWaveStreak = 0
         }
 
-        // Smoothly recover squelch gain back to 1.0
-        if (squelchGain < 1.0f) {
-            squelchGain += (1.0f - squelchGain) * squelchRecovery
+        // Step F: Hold timer and smooth recovery
+        if (squelchHoldBuffers > 0) {
+            squelchHoldBuffers--
+        } else if (squelchGain < 1.0f) {
+            val recovery = if (isAggressiveMode) squelchRecoveryAggressive else squelchRecoveryNormal
+            squelchGain += (1.0f - squelchGain) * recovery
             if (squelchGain > 0.98f) squelchGain = 1.0f
         }
     }
@@ -128,11 +157,17 @@ class AntiHowlProcessor(private val sampleRate: Int = 48000) {
     fun reset() {
         highPassFilter.reset()
         lowPassFilter.reset()
-        antiResonanceNotch.reset()
-        delayBuffer.fill(0f)
-        writeIndex = 0
-        readPhase1 = 0.0
+        notch800.reset()
+        notch1600.reset()
+        notch2500.reset()
+        notch3150.reset()
+        x1A.fill(0.0)
+        y1A.fill(0.0)
+        x1B.fill(0.0)
+        y1B.fill(0.0)
+        oscPhase = 0.0
         squelchGain = 1.0f
+        squelchHoldBuffers = 0
         sineWaveStreak = 0
     }
 
@@ -166,7 +201,6 @@ class AntiHowlProcessor(private val sampleRate: Int = 48000) {
             val cosW0 = cos(w0)
             val sinW0 = sin(w0)
             val alpha = sinW0 / (2.0 * q)
-
             val a0 = 1.0 + alpha
             b0 = ((1.0 + cosW0) / 2.0) / a0
             b1 = (-(1.0 + cosW0)) / a0
@@ -180,7 +214,6 @@ class AntiHowlProcessor(private val sampleRate: Int = 48000) {
             val cosW0 = cos(w0)
             val sinW0 = sin(w0)
             val alpha = sinW0 / (2.0 * q)
-
             val a0 = 1.0 + alpha
             b0 = ((1.0 - cosW0) / 2.0) / a0
             b1 = (1.0 - cosW0) / a0
@@ -194,7 +227,6 @@ class AntiHowlProcessor(private val sampleRate: Int = 48000) {
             val cosW0 = cos(w0)
             val sinW0 = sin(w0)
             val alpha = sinW0 / (2.0 * q)
-
             val a0 = 1.0 + alpha
             b0 = 1.0 / a0
             b1 = (-2.0 * cosW0) / a0

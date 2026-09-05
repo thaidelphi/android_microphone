@@ -235,12 +235,18 @@ class AudioDeviceManager(private val context: Context) {
                     audioManager.isSpeakerphoneOn = false
                 }
 
-                // Set stream volumes to appropriate levels
+                // Ensure stream volumes are active, but do NOT override user's lower volume setting
                 try {
-                    val maxCall = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-                    audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxCall, 0)
-                    val maxMusic = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxMusic * 0.85f).toInt(), 0)
+                    val curCall = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+                    if (curCall == 0) {
+                        val maxCall = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                        audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, (maxCall * 0.7f).toInt(), 0)
+                    }
+                    val curMusic = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    if (curMusic == 0) {
+                        val maxMusic = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxMusic * 0.65f).toInt(), 0)
+                    }
                 } catch (e: Throwable) {}
             } else {
                 // Non-Bluetooth microphone (Phone mic, Wired headset, USB mic)

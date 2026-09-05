@@ -8,14 +8,17 @@ import kotlin.math.sqrt
 import kotlin.math.tanh
 
 class AudioDspProcessor(val sampleRate: Int = 48000) {
-    // Gain multiplier (1.0 = normal, up to 8.0x)
-    var gain: Float = 2.2f
+    // Gain multiplier (1.0 = normal unity gain, up to 6.0x)
+    var gain: Float = 1.0f
 
-    // Noise gate threshold: 0.0 (off) to 0.1 (aggressive)
-    var noiseGateThreshold: Float = 0.0f
+    // Noise gate threshold: 0.02 (2% default prevents acoustic feedback during silence)
+    var noiseGateThreshold: Float = 0.02f
 
-    // Anti-Howling / Feedback Eliminator Engine
-    val antiHowl = AntiHowlProcessor(sampleRate)
+    // Anti-Howling / Feedback Eliminator Engine (aggressive mode by default for safety)
+    val antiHowl = AntiHowlProcessor(sampleRate).apply {
+        isEnabled = true
+        isAggressiveMode = true
+    }
 
     // Vocal Karaoke Echo / Reverb Delay Engine
     val echo = EchoProcessor(sampleRate)
